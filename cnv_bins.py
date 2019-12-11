@@ -9,16 +9,8 @@ from datetime import datetime
 import math
 
 extended_help = """
-This is the extended help.
-
 To run:
 python3 window_cnv.py --controls ../samples/down_syndrome/controls/subset/ --experimental ../samples/down_syndrome/ds/subset/
-
-To subset bam file:
-[https://bioinformatics.stackexchange.com/questions/3565/subset-smaller-bam-to-contain-several-thousand-rows-from-multiple-chromosomes]
-samtools view -bo 7015.subset.bam -s 123.01 7015.bam chr1 chr2 chr3 chr4 chr5 chr6 chr7 chr8 chr9 chr10 chr11 chr12 chr13 chr14 chr15 chr16 chr17 chr18 chr19 chr20 chr21 chrM chrX chrY
-
-samtools view -b input.bam chrM chr21 > output.bam
 
 For final:
 '../samples/down_syndrome/final_controls/'
@@ -58,14 +50,14 @@ parser.add_argument(
 arg = parser.parse_args()
 
 # Write print statement outputs to file
-sys.stdout = open(datetime.now().strftime('%I:%M%p_%m%d') + '_cnv_bins_full_no_XY.out', 'w')
+sys.stdout = open(datetime.now().strftime('%I:%M%p_%b%d') + '_cnv_bins_full.out', 'w')
 
 # Chromosomes of interest (only autosomal for now)
 # Need to work on integrating sex chromosomes
 chromosomes = []
 for i in range (1, 23): # 1..22
         chromosomes.append('chr' + str(i))
-
+chromosomes.extend(["chrX", "chrY"])
 
 
 def getBamfiles(controlPath, expPath):
@@ -113,7 +105,6 @@ def initCoverage(bamfilePaths):
 	coverage = {chrm: {} for chrm in chromosomes}
 	readStats = {}
 	print(chromosomes)
-	print(readStatsKeys)	
 	bamfiles = []
 	samfileStats = []
 	
@@ -129,7 +120,7 @@ def initCoverage(bamfilePaths):
 					
 		readStats[bamfile] = {key: 0 for key in [*chromosomes, "totalReads", "totalLen"]}	
 		for read in samfile:
-			# Skip duplicate reads
+			# Skip PCR and optical duplicate reads
 			if read.is_duplicate == False:
 				chrm = read.reference_name
 				readLength = read.reference_length
@@ -186,29 +177,49 @@ def finalizeCoverage(coverage, readStats, numControl):
 	for chrm in coverage:
 		for binkey in coverage[chrm]:
 			normfactorCov = 0
+			normfactorX = 0
+			normfactorY = 0
 			for bamfile in coverage[chrm][binkey]:
 				if "control" in bamfile:
 					if bamfile in coverage[chrm][binkey].keys():
 						# Coverage 	= sum of (reads * read length) in each bin / bin size
 						# To normalize: divide by total coverage of sample = sum of (reads * read length) in sample
-						normfactorCov += ( coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window ) / \
-							 readStats[bamfile]['totalLen'] 
-							
-			# center to the median instead of the mean
-			# instead of each bin, center to median of ALL autosomes and use that value as the reference copy number of ~2?
-			# or better to do it for each bin? or better yet, for each sample. 
-			# Find reference copy number of each sample by finding mean and median of all autosomes in all control samples 	
+						
+						# if bamfile is from female, stays the same, diploid X, no Y
+						# if bamfile is from male, use normfactorSexChrm and normalize to 1x each
+						if chrm == "chrX":
+							normfactorX += ( coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window) / \
+								readStats[bamfile]['totalLen']
+						if chrm == "chrY":
+							normfactorY += ( coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window) / \
+								readStats[bamfile]['totalLen']
+						else:
+							normfactorCov += ( coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window ) / \
+								readStats[bamfile]['totalLen'] 
+						 	
+												
 	
 			# Normalize coverage values to a copy number of ~2 (for normal diploid)	
 			normfactorCov = (0.5 * normfactorCov) / numControl
+			normfactorX = normfactorX / numControl
+			normfactorY = normfactorY / numControl
+
 			for bamfile in coverage[chrm][binkey]:
 				
 				if bamfile in coverage[chrm][binkey].keys():
-					if normfactorCov != 0:
+					if normfactorX != 0: # so bin is for chrX
+						coverage[chrm][binkey][bamfile]['cov'] = \
+							(coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window) / \
+							readStats[bamfile]['totalLen'] / normfactorX
+					elif normfactorY != 0: # so bin is for chrY
+						coverage[chrm][binkey][bamfile]['cov'] = \
+							(coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window) / \
+							readStats[bamfile]['totalLen'] / normfactorY
+					elif normfactorCov != 0: # so bin is for remaining autosomal chrm and non-zero
 						coverage[chrm][binkey][bamfile]['cov'] = \
 							(coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window ) / \
 							readStats[bamfile]['totalLen'] / normfactorCov
-				
+	
 	return coverage
 
 
@@ -225,10 +236,10 @@ def printCoverage(coverage, samples):
 	Returns:
 	None
 	"""
-	with open(datetime.now().strftime('%I:%M%p_%m%d') + '_cnv_bins_full_no_XY.txt', 'w', newline='') as fullC:
-		fullC = csv.writer(fullC, delimiter='\t')
+	with open(datetime.now().strftime('%I:%M%p_%b%d') + '_cnv_bins_full.txt', 'w', newline='') as outfile:
+		outfile = csv.writer(outfile, delimiter='\t')
 		samples.sort()
-		fullC.writerow(['chr', 'start', 'end', *samples])
+		outfile.writerow(['chr', 'start', 'end', *samples])
         
 		for chrm in coverage:
 			for binkey in coverage[chrm]:
@@ -239,7 +250,7 @@ def printCoverage(coverage, samples):
 				covList = [round(elem, 3) for elem in covList]
 
 				if len(coverage[chrm][binkey]) == len(samples):
-					fullC.writerow([
+					outfile.writerow([
 						chrm,
 						binkey*arg.window,
 						(binkey+1)*arg.window,

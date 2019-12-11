@@ -1,4 +1,3 @@
-# install.packages("shiny")
 library(shiny)
 library(scatterD3)
 
@@ -6,6 +5,7 @@ library(magrittr) # pipe
 library(tibble) # as_tibble(), add_column()
 library(dplyr)
 library(tidyr) # unite()
+library(glue) # glue() 
 
 # Shiny tutorial pdf
 # https://ibiostat.be/seminar/uploads/introdcution-r-shiny-package-20160330.pdf
@@ -25,37 +25,41 @@ readData <- function(inputData, sampleNames) {
   return(data)
 }
 data <- readData(
-  inputData = "Dec06_cnv_output.txt",
+  inputData = "Dec11_cnv_bins_full.txt",
   sampleNames = c("chr", "start", "end",
                   "cJLKD", "c6978", "c6980", "c7015", "c7016",
                   "e7005", "e7006", "e7007", "e7008"))
 
 
 ui <- fluidPage(
-  titlePanel("CNV caller visualization"),
+  titlePanel("Copy number variation (CNV) caller visualization"),
   sidebarLayout(
     sidebarPanel(
+      h4(strong("x variable:")),
+      h4("Chromosome bin"),
       selectInput("scatterD3_chrm", 
-                  label = "Chromosome position (x variable)", 
+                  label = "Select chromosome.",
                   choices = unique(data$chrm), 
                   selected = "chr21"),
       helpText("Format of the x variable in the plot is position chr:start-end"),
+      br(),
+      h4(strong("y variable:")),
+      h4("Copy number of chromosome bin for sample"),
       selectInput("scatterD3_y", 
-                  label = "CNV of sample (y variable)", 
-                  choices = names(data), 
-                  selected = "cJLKD")
+                  label = "Select sample.", 
+                  choices = names(data)[-c(1:2)], 
+                  selected = names(data)[3]),
+      checkboxInput("checkbox_yrange", "Set y variable range to [0, 6]", value = FALSE)
     ),
-    mainPanel(scatterD3Output("scatterPlot"))
+    mainPanel(
+      span(textOutput("plotTitle"), style = "font-weight: bold"),
+      scatterD3Output("scatterPlot"))
   )
 )
 
 
 # Shiny app server
 server <- function(input, output) {
-  # dataD3 <- reactive({
-  #   data[which(data$chrm == input$scatterD3_chrm), ]
-  # })
-
   data_x <- reactive({
     data$pos[which(data$chrm == input$scatterD3_chrm)]
   })
@@ -63,23 +67,32 @@ server <- function(input, output) {
     data[which(data$chrm == input$scatterD3_chrm), input$scatterD3_y]
   })
   
+  output$plotTitle <- renderText({
+    paste("Copy number plot of bins in chromosome ", input$scatterD3_chrm, "and sample ", input$scatterD3_y)
+  })
+  
   output$scatterPlot <- renderScatterD3({
+    if (input$checkbox_yrange == TRUE) {
+      ylim_var <- c(0,6)
+    } else {
+      ylim_var <- NULL
+    }
+    
     scatterD3(x = data_x(),
               y = data_y(),
-              xlab = "Positions of chromosome",
-              ylab = "Copy number estimation of sample",
+              xlab = glue::glue("Bin in chromosome {input$scatterD3_chrm}"),
+              ylab = glue::glue("Copy number of chromosome bin in sample {input$scatterD3_y}"),
               point_size = 18, point_opacity = 0.6,
               hover_size = 20, hover_opacity = 1,
               lines = data.frame(slope = c(0, 0), 
                                  intercept = c(2, 3), 
-                                 stroke = c("green", "red"),
+                                 stroke = c("black", "red"),
                                  stroke_width = c(2, 2)),
-              ylim = c(0, 5))
+              caption = "This is the caption for scatterD3",
+              ylim = ylim_var
+              )
   })
-  # default ylim = c(0,5), user can zoom out to see full graph with outliers
-  
-  #scatterD3(x = data[which(data$chrm == input$scatterD3_chrm), input$scatterD3_x],#data_x(), #data()[,input$scatterD3_x],#input$xcol, 
-  #          y = data[which(data$chrm == input$scatterD3_chrm), input$scatterD3_y])#data_y())#data()[,input$scatterD3_y])#input$ycol)
+
 }
 
 shinyApp(ui = ui, server = server)

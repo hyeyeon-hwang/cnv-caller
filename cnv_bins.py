@@ -52,8 +52,7 @@ arg = parser.parse_args()
 # Write print statement outputs to file
 sys.stdout = open(datetime.now().strftime('%I:%M%p_%b%d') + '_cnv_bins_full.out', 'w')
 
-# Chromosomes of interest (only autosomal for now)
-# Need to work on integrating sex chromosomes
+# Chromosomes of interest
 chromosomes = []
 for i in range (1, 23): # 1..22
         chromosomes.append('chr' + str(i))
@@ -89,7 +88,7 @@ def getBamfiles(controlPath, expPath):
 
 
 
-def initCoverage(bamfilePaths):
+def initCnv(bamfilePaths):
 	"""
 	Function: 
 	read BAM files and store coverage for each chrm:bin:sample.
@@ -98,12 +97,12 @@ def initCoverage(bamfilePaths):
 	bamfilePaths (list): list containing all BAM file paths.
 	
 	Returns:
-	coverage: dictionary containing coverage of each chrm:bin:sample.
+	cnv: dictionary containing cnv info of each chrm:bin:sample.
 	bamfiles: list containing BAM files. 
-	readStats: dictionary containing the total reads and total read lengths for each sample.
+	stats: dictionary containing the total reads and total read lengths for each sample.
 	"""
-	coverage = {chrm: {} for chrm in chromosomes}
-	readStats = {}
+	cnv = {chrm: {} for chrm in chromosomes}
+	stats = {}
 	print(chromosomes)
 	bamfiles = []
 	samfileStats = []
@@ -118,119 +117,156 @@ def initCoverage(bamfilePaths):
 		# print(samfile.references)
 		# print(samfile.get_reference_length('chr1'))
 					
-		readStats[bamfile] = {key: 0 for key in [*chromosomes, "totalReads", "totalLen"]}	
+		stats[bamfile] = {key: 0 for key in [*chromosomes, "totalReads", "totalLen"]}	
 		for read in samfile:
 			# Skip PCR and optical duplicate reads
 			if read.is_duplicate == False:
 				chrm = read.reference_name
 				readLength = read.reference_length
 				pos = read.reference_start
-				if chrm in coverage:
-					# Increment readStats components
-					readStats[bamfile][chrm] += 1
-					readStats[bamfile]['totalReads'] += 1				
-					readStats[bamfile]['totalLen'] += readLength		
+				if chrm in cnv:
+					# Increment stats components
+					stats[bamfile][chrm] += 1
+					stats[bamfile]['totalReads'] += 1				
+					stats[bamfile]['totalLen'] += readLength		
 					
 					# Set binkey	
 					binkey = int(pos/arg.window)
-					if binkey in coverage[chrm]:
-						if bamfile in coverage[chrm][binkey]:
+					if binkey in cnv[chrm]:
+						if bamfile in cnv[chrm][binkey]:
 						# binkey and sample exist
-							coverage[chrm][binkey][bamfile]['rawReadsNum'] += 1
-							coverage[chrm][binkey][bamfile]['rawReadsLen'] += (1*readLength)
+							cnv[chrm][binkey][bamfile]['sumReadCounts'] += 1
+							cnv[chrm][binkey][bamfile]['sumReadLengths'] += (1*readLength)
 						else:
 						# binkey exists but add new sample
-							coverage[chrm][binkey].update({bamfile: {\
-								'rawReadsNum': 1,\
-								'rawReadsLen': 1*readLength,\
-								'cov': 0
+							cnv[chrm][binkey].update({bamfile: {\
+								'sumReadCounts': 1,\
+								'sumReadLengths': 1*readLength,\
+								copynum: 0
 							}})
 					else: 
-						# add new binkey and new sample with:
-						#	rawReadsNum
-						#	rawReadsLen
-						#	cov	
-						coverage[chrm].update({binkey: {bamfile: {\
-							'rawReadsNum': 1,\
-							'rawReadsLen': 1*readLength,\
-							'cov': 0
+						# add new binkey and new sample
+						cnv[chrm].update({binkey: {bamfile: {\
+							'sumReadCounts': 1,\
+							'sumReadLengths': 1*readLength,\
+							copynum: 0
 						}}})
 				
 		print('time for bamfile = %s' % (datetime.now() - tstart))
-	return (coverage, bamfiles, readStats)
+	return (cnv, bamfiles, stats)
+
+def findSampleSex(bamfiles, stats):
+	print("findSampleSex(%s, stats)" % bamfile)
+
+	numMaleSamples = 0
+	numFemaleSamples = 0
+	numMaleControl = 0
+	numFemaleControl = 0
+
+	for bamfile in bamfiles:
+			
+		readsChrX = stats[bamfile]["chrX"]
+		readChrY = stats[bamfile]["chrY"]
+		print(readsChrX)
+		print(readsChrY)	 
+		
+		# for males: chrY is ~11-12% of chrX
+		# for females: chrY is ~.4% of chrX, except for 1 sample
+		ratioYtoX = readsChrY / readsChrX
+		# if number of chrY is >5% of chrX, sample is male
+		if ratioYtoX > 0.05: # most are greater than 10% 
+			stats[bamfile]["sex"] == "male"
+			numMaleSamples += 1
+			if "control" in bamfile:
+				numMaleControl += 1
+		else:
+			stats[bamfile]["sex"] == "female"
+			numFemaleSamples += 1
+			if "control" in bamfile:
+				numFemaleControl += 1
+
+	return (stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)
 
 
-
-def finalizeCoverage(coverage, readStats, numControl):
+def finalizeCnv(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl):
 	"""
 	Function: 
-	Update "coverage" dictionary with normalized copy number estimations.
+	Update "cnv" dictionary with normalized copy number estimations.
 	
 	Parameters:
-	coverage: dictionary containing raw reads and lengths in each chrm:bin:sample.
+	cnv: dictionary containing raw reads and lengths in each chrm:bin:sample.
 	numControl: number of control BAM files (samples).
 	
 	Returns:
-	coverage: updated dictionary containing copy number estimations in each chrm:bin:sample.
+	cnv: updated dictionary containing copy number estimations in each chrm:bin:sample.
 	"""
-	effGenomeSize = 3088269832
-	for chrm in coverage:
-		for binkey in coverage[chrm]:
+	for chrm in cnv:
+		for binkey in cnv[chrm]:
 			normfactorCov = 0
 			normfactorX = 0
 			normfactorY = 0
-			for bamfile in coverage[chrm][binkey]:
+			for bamfile in cnv[chrm][binkey]:
 				if "control" in bamfile:
-					if bamfile in coverage[chrm][binkey].keys():
+					if bamfile in cnv[chrm][binkey].keys():
 						# Coverage 	= sum of (reads * read length) in each bin / bin size
 						# To normalize: divide by total coverage of sample = sum of (reads * read length) in sample
-						
+						binCoverage = cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window
+						totalReadsAndLengths = stats[bamfile]['totalLen']		
+						normalizedBinCoverage = binCoverage / totalReadsAndLengths
+							
 						# if bamfile is from female, stays the same, diploid X, no Y
 						# if bamfile is from male, use normfactorSexChrm and normalize to 1x each
+						
+						sampleSex = stats[bamfile]["sex"]
 						if chrm == "chrX":
-							normfactorX += ( coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window) / \
-								readStats[bamfile]['totalLen']
-						if chrm == "chrY":
-							normfactorY += ( coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window) / \
-								readStats[bamfile]['totalLen']
+							if sampleSex == "male":
+								normfactorMaleX += normalizedBinCoverage
+							if sampleSex == "female":
+								normfactorFemaleX += normalizedBinCoverage
+						elif chrm == "chrY":
+							if sampleSex == "male":
+								normfactorMaleY += normalizedBinCoverage
+							if sampleSex == "female":
+								normfactorFemaleY += normalizedBinCoverage
 						else:
-							normfactorCov += ( coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window ) / \
-								readStats[bamfile]['totalLen'] 
+							normfactorCov += normalizedBinCoverage
 						 	
 												
 	
 			# Normalize coverage values to a copy number of ~2 (for normal diploid)	
-			normfactorCov = (0.5 * normfactorCov) / numControl
-			normfactorX = normfactorX / numControl
-			normfactorY = normfactorY / numControl
-
-			for bamfile in coverage[chrm][binkey]:
+			normfactorCov = (0.5 * normfactorCov) / (numMaleControl + numFemaleControl)
+			if numMaleControl != 0:
+				normfactorMaleX = normfactorMaleX / numMaleControl
+			if numFemaleControl != 0:
+				normfactorFemaleX = normfactorFemaleX / numFemaleControl
+			
+			for bamfile in cnv[chrm][binkey]:
 				
-				if bamfile in coverage[chrm][binkey].keys():
+				if bamfile in cnv[chrm][binkey].keys():
 					if normfactorX != 0: # so bin is for chrX
-						coverage[chrm][binkey][bamfile]['cov'] = \
-							(coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window) / \
-							readStats[bamfile]['totalLen'] / normfactorX
+						cnv[chrm][binkey][bamfile][copynum] = \
+							(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
+							stats[bamfile]['totalLen'] / normfactorX
 					elif normfactorY != 0: # so bin is for chrY
-						coverage[chrm][binkey][bamfile]['cov'] = \
-							(coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window) / \
-							readStats[bamfile]['totalLen'] / normfactorY
+						cnv[chrm][binkey][bamfile][copynum] = \
+							(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
+							stats[bamfile]['totalLen'] / normfactorY
 					elif normfactorCov != 0: # so bin is for remaining autosomal chrm and non-zero
-						coverage[chrm][binkey][bamfile]['cov'] = \
-							(coverage[chrm][binkey][bamfile]['rawReadsLen'] / arg.window ) / \
-							readStats[bamfile]['totalLen'] / normfactorCov
+						cnv[chrm][binkey][bamfile][copynum] = \
+							(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window ) / \
+							stats[bamfile]['totalLen'] / normfactorCov
 	
-	return coverage
+	return cnv
 
 
 
-def printCoverage(coverage, samples):
+def printCoverage(cnv, samples):
 	"""
 	Function: 
 	output to file.
 	
 	Parameters:
-	coverage: dictionary containing CNV estimations
+	cnv: dictionary containing CNV estimations
 	samples: list contanining BAM files paths
 
 	Returns:
@@ -241,20 +277,20 @@ def printCoverage(coverage, samples):
 		samples.sort()
 		outfile.writerow(['chr', 'start', 'end', *samples])
         
-		for chrm in coverage:
-			for binkey in coverage[chrm]:
+		for chrm in cnv:
+			for binkey in cnv[chrm]:
 				readsList = []
-				covList = []
-				for sample in sorted (coverage[chrm][binkey]):
-					covList.append(coverage[chrm][binkey][sample]['cov'])
-				covList = [round(elem, 3) for elem in covList]
+				copynumList = []
+				for sample in sorted (cnv[chrm][binkey]):
+					copynumList.append(cnv[chrm][binkey][sample][copynum])
+				copynumList = [round(elem, 3) for elem in copynumList]
 
-				if len(coverage[chrm][binkey]) == len(samples):
+				if len(cnv[chrm][binkey]) == len(samples):
 					outfile.writerow([
 						chrm,
 						binkey*arg.window,
 						(binkey+1)*arg.window,
-						*covList
+						*copynumList
 					])
 	return None
 
@@ -267,22 +303,25 @@ if __name__ == '__main__':
 	print(arg.experimental)
 	print(arg.window)
 
-	s_getBamfiles = datetime.now()	
 	bamfilePaths, numControl, numExp = getBamfiles(arg.controls, arg.experimental)
-	e_getBamfiles_s_initCoverage = datetime.now()
-	print('getBamfiles() %s' % (e_getBamfiles_s_initCoverage - s_getBamfiles))
+	end_getBamfiles = datetime.now()
+	print('getBamfiles() %s' % (end_getBamfiles - timestart))
 
-	coverage, bamfiles, readStats = initCoverage(bamfilePaths)
-	e_initCoverage_s_finalizeCoverage = datetime.now()
-	print('initCoverage() %s' % (e_initCoverage_s_finalizeCoverage - e_getBamfiles_s_initCoverage))
-	print(readStats)	
+	cnv, bamfiles, stats = initCnv(bamfilePaths)
+	end_initCnv = datetime.now()
+	print('initCnv() %s' % (end_initCnv - end_getBamfiles))
 
-	coverage = finalizeCoverage(coverage, readStats, numControl)
-	e_finalizeCoverage_s_printCoverage = datetime.now()
-	print('finalizeCoverage() %s' % (e_finalizeCoverage_s_printCoverage -  e_initCoverage_s_finalizeCoverage))
+	stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl = findSampleSex(bamfiles, stats)
+	end_findSampleSex = datetime.now()
+	print('findSampleSex() %s' % (end_findSampleSex - end_initCnv)
+	print(stats)	
+
+	cnv = finalizeCnv(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)
+	end_finalizeCnv = datetime.now()
+	print('finalizeCnv() %s' % (end_finalizeCnv - end_findSampleSex))
 		
-	printCoverage(coverage, bamfiles)
-	e_printCoverage = datetime.now()
-	print('printCoverage() %s' % (e_printCoverage - e_finalizeCoverage_s_printCoverage))
+	printCoverage(cnv, bamfiles)
+	end_printCoverage = datetime.now()
+	print('printCoverage() %s' % (end_printCoverage - end_finalizeCnv))
 
 	print('timeend = %s' % (datetime.now() - timestart))

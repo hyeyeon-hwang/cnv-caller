@@ -4,7 +4,7 @@ library(scatterD3)
 library(magrittr) # pipe
 library(tibble) # as_tibble(), add_column()
 library(dplyr)
-library(tidyr) # unite()
+library(tidyr) # unite() 
 library(glue) # glue() 
 
 # Shiny tutorial pdf
@@ -14,6 +14,11 @@ library(glue) # glue()
 
 # scatterD3 shiny app source code
 # https://github.com/juba/scatterD3_shiny_app/blob/master/server.R
+
+# Add in optional parameter for sex. Check ratio of chrY/chrX reads and double
+# check if it matches with sex of sample that was inputted
+
+# Add submit button or progress bar because of loading/lagging? 
 
 # Data
 readData <- function(inputData, sampleNames) {
@@ -80,8 +85,8 @@ server <- function(input, output) {
     
     scatterD3(x = data_x(),
               y = data_y(),
-              xlab = glue::glue("Bin in chromosome {input$scatterD3_chrm}"),
-              ylab = glue::glue("Copy number of chromosome bin in sample {input$scatterD3_y}"),
+              xlab = glue::glue("Bin in {input$scatterD3_chrm}"),
+              ylab = glue::glue("Copy number of {input$scatterD3_chrm} bin in sample {input$scatterD3_y}"),
               point_size = 18, point_opacity = 0.6,
               hover_size = 20, hover_opacity = 1,
               lines = data.frame(slope = c(0, 0), 

@@ -156,7 +156,21 @@ def initCnv(bamfilePaths):
 	return (cnv, bamfiles, stats)
 
 def findSampleSex(bamfiles, stats):
-	print("findSampleSex(%s, stats)" % bamfile)
+	"""
+	Function:
+	Find the sex of input sample.
+	
+	Parameters:
+	bamfiles: list containing the input sample files.
+	stats: dictionary containing sample info.
+
+	Return:
+	stats: updated dictionary with sex info as a string ("male" or "female").
+	numMaleSamples: number of male samples.
+	numFemaleSamples: number of female samples.
+	numMaleControl: number of male control samples.
+	numFemaleControl: number of female control samples.
+	"""
 
 	numMaleSamples = 0
 	numFemaleSamples = 0
@@ -164,17 +178,10 @@ def findSampleSex(bamfiles, stats):
 	numFemaleControl = 0
 
 	for bamfile in bamfiles:
-			
-		readsChrX = stats[bamfile]["chrX"]
-		readChrY = stats[bamfile]["chrY"]
-		print(readsChrX)
-		print(readsChrY)	 
-		
-		# for males: chrY is ~11-12% of chrX
-		# for females: chrY is ~.4% of chrX, except for 1 sample
-		ratioYtoX = readsChrY / readsChrX
-		# if number of chrY is >5% of chrX, sample is male
-		if ratioYtoX > 0.05: # most are greater than 10% 
+		# chrY / chrX reads ratio = ~11-12% for males, ~0.4-0.5% for females
+		# set male cutoff to 6%
+		# if (reads in chrY / reads in chrX) chrY is > 0.06, sample is male
+		if stats[bamfile]["chrY"]/stat[bamfile]["chrX"] > 0.06: 
 			stats[bamfile]["sex"] == "male"
 			numMaleSamples += 1
 			if "control" in bamfile:
@@ -203,8 +210,11 @@ def finalizeCnv(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, nu
 	for chrm in cnv:
 		for binkey in cnv[chrm]:
 			normfactorCov = 0
-			normfactorX = 0
-			normfactorY = 0
+			normfactorMaleX = 0
+			normfactorFemaleX = 0
+			normfactorMaleY = 0
+			normfactorFemaleY = 0
+
 			for bamfile in cnv[chrm][binkey]:
 				if "control" in bamfile:
 					if bamfile in cnv[chrm][binkey].keys():
@@ -233,29 +243,42 @@ def finalizeCnv(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, nu
 						 	
 												
 	
-			# Normalize coverage values to a copy number of ~2 (for normal diploid)	
+			# Normalize coverage values to a copy number of ~2 for autosomal chromosomes (for normal diploid)	
 			normfactorCov = (0.5 * normfactorCov) / (numMaleControl + numFemaleControl)
+			# Normalize coverage value to a copy number of ~1 for sex chromosomes
 			if numMaleControl != 0:
-				normfactorMaleX = normfactorMaleX / numMaleControl
+				normfactorMaleX = normfactorMaleX / numMaleControl	
+				normfactorMaleY = normfactorMaleY / numMaleControl
 			if numFemaleControl != 0:
 				normfactorFemaleX = normfactorFemaleX / numFemaleControl
+				normfactorFemaleY = normfactorFemaleY / numFemaleControl
 			
 			for bamfile in cnv[chrm][binkey]:
-				
 				if bamfile in cnv[chrm][binkey].keys():
-					if normfactorX != 0: # so bin is for chrX
-						cnv[chrm][binkey][bamfile][copynum] = \
-							(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
-							stats[bamfile]['totalLen'] / normfactorX
-					elif normfactorY != 0: # so bin is for chrY
-						cnv[chrm][binkey][bamfile][copynum] = \
-							(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
-							stats[bamfile]['totalLen'] / normfactorY
-					elif normfactorCov != 0: # so bin is for remaining autosomal chrm and non-zero
-						cnv[chrm][binkey][bamfile][copynum] = \
-							(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window ) / \
-							stats[bamfile]['totalLen'] / normfactorCov
-	
+					sampleSex = stats[bamfile]["sex"]
+					if chrm == "chrX":
+						if sampleSex == "male" and normfactorMaleX != 0:
+							cnv[chrm][binkey][bamfile][copynum] = \
+								(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
+								stats[bamfile]['totalLen'] / normfactorMaleX
+						if sampleSex == "female" and normfactorFemaleX != 0:
+							cnv[chrm][binkey][bamfile][copynum] = \
+								(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
+								stats[bamfile]['totalLen'] / normfactorFemaleX
+					elif chrm == "chrY":
+						if sampleSex == "male" and normfactorMaleY != 0:
+							cnv[chrm][binkey][bamfile][copynum] = \
+								(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
+								stats[bamfile]['totalLen'] / normfactorMaleY
+						if sampleSex == "female" and normfactorFemaleY != 0:
+							cnv[chrm][binkey][bamfile][copynum] = \
+								(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
+								stats[bamfile]['totalLen'] / normfactorFemaleY
+					else:
+						if normfactorCov != 0:
+							cnv[chrm][binkey][bamfile][copynum] = \
+						 		(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
+								stats[bamfile]['totalLen'] / normfactorCov
 	return cnv
 
 

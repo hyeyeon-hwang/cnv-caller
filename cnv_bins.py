@@ -62,7 +62,7 @@ chromosomes.extend(["chrX", "chrY"])
 def getBamfiles(controlPath, expPath):
 	"""
 	Function:
-	get BAM files from specified paths.
+	Get BAM files from specified paths.
 	
 	Parameters:
 	controlPath (str): path to directory containing control BAM files.
@@ -87,19 +87,18 @@ def getBamfiles(controlPath, expPath):
 	return (bamfilePaths, numControl, numExp)
 
 
-
-def initCnv(bamfilePaths):
+def populateCnvReads(bamfilePaths):
 	"""
 	Function: 
-	read BAM files and store coverage for each chrm:bin:sample.
+	Read BAM files and store coverage for each chrm:bin:sample.
 	
 	Parameters:
 	bamfilePaths (list): list containing all BAM file paths.
 	
 	Returns:
-	cnv: dictionary containing cnv info of each chrm:bin:sample.
-	bamfiles: list containing BAM files. 
-	stats: dictionary containing the total reads and total read lengths for each sample.
+	cnv (dict): dictionary containing cnv info of each chrm:bin:sample.
+	bamfiles (list): list containing BAM files. 
+	stats (dict): dictionary containing the total reads and total read lengths for each sample.
 	"""
 	cnv = {chrm: {} for chrm in chromosomes}
 	stats = {}
@@ -112,10 +111,6 @@ def initCnv(bamfilePaths):
 		print('bamfile = %s' % bamfile)
 		tstart = datetime.now()
 		samfile = pysam.AlignmentFile(bamfile, 'rb') 
-		# print(samfile.mapped)
-		# print(samfile.lengths)
-		# print(samfile.references)
-		# print(samfile.get_reference_length('chr1'))
 					
 		stats[bamfile] = {key: 0 for key in [*chromosomes, "totalReads", "totalLen"]}	
 		for read in samfile:
@@ -155,21 +150,22 @@ def initCnv(bamfilePaths):
 		print('time for bamfile = %s' % (datetime.now() - tstart))
 	return (cnv, bamfiles, stats)
 
+
 def findSampleSex(bamfiles, stats):
 	"""
 	Function:
 	Find the sex of input sample.
 	
 	Parameters:
-	bamfiles: list containing the input sample files.
-	stats: dictionary containing sample info.
+	bamfiles (list): list containing the input sample files.
+	stats (dict): dictionary containing sample info.
 
 	Return:
-	stats: updated dictionary with sex info as a string ("male" or "female").
-	numMaleSamples: number of male samples.
-	numFemaleSamples: number of female samples.
-	numMaleControl: number of male control samples.
-	numFemaleControl: number of female control samples.
+	stats (dict): updated dictionary with sex info as a string ("male" or "female").
+	numMaleSamples (int): number of male samples.
+	numFemaleSamples (int): number of female samples.
+	numMaleControl (int): number of male control samples.
+	numFemaleControl (int): number of female control samples.
 	"""
 
 	numMaleSamples = 0
@@ -195,63 +191,88 @@ def findSampleSex(bamfiles, stats):
 	return (stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)
 
 
-def finalizeCnv(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl):
+def normalizeCnv(cnv, chrm, binkey, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl):
+"""
+	Function:
+	Find normalization factors for autosomal and sex chromosomes for each chrm:bin:sample
+
+	Parameters:
+	cnv (dict): current cnv dictionary
+	chrm (str): chromosome key for cnv dictionary
+	binkey (int): binkey key for cnv:chrm dictionary
+	numMaleSamples (int): number of male samples
+	numFemaleSamples (int): number of female samples
+	numMaleControl (int): number of male control samples
+	numFemaleControl (int): number of female control samples
+
+	Returns:
+	normfactorAut (int): normalization factor for all autosomal chromosomes
+	normfactorMaleX (int): normalization factor for all male X chromosomes
+	normfactorMaleY (int): normalization factor for all male Y chromosomes
+	normfactorFemaleX (int): normalization factor for all female X chromosomes
+	normfactorFemaleY (int): normalization factor for all female Y chromosomes
+"""
+	normfactorAut = 0
+	normfactorMaleX = 0
+	normfactorFemaleX = 0
+	normfactorMaleY = 0
+	normfactorFemaleY = 0
+
+	for bamfile in cnv[chrm][binkey]:
+		if "control" in bamfile:
+			if bamfile in cnv[chrm][binkey].keys():
+				# Coverage      = sum of (reads * read length) in each bin / bin size
+				# To normalize: divide by total coverage of sample = sum of (reads * read length) in sample
+				binCoverage = cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window
+				totalReadsAndLengths = stats[bamfile]['totalLen']
+				normalizedBinCoverage = binCoverage / totalReadsAndLengths
+
+				# if bamfile is from female, stays the same, diploid X, no Y
+				# if bamfile is from male, use normfactorSexChrm and normalize to 1x each
+
+				sampleSex = stats[bamfile]["sex"]
+				if chrm == "chrX":
+					if sampleSex == "male":
+						normfactorMaleX += normalizedBinCoverage
+					if sampleSex == "female":
+						normfactorFemaleX += normalizedBinCoverage
+				elif chrm == "chrY":
+					if sampleSex == "male":
+						normfactorMaleY += normalizedBinCoverage
+					if sampleSex == "female":
+						normfactorFemaleY += normalizedBinCoverage
+				else:
+					normfactorAut += normalizedBinCoverage
+
+	# Normalize coverage values to a copy number of ~2 for autosomal chromosomes (for normal diploid)       
+	normfactorAut = (0.5 * normfactorAut) / (numMaleControl + numFemaleControl)
+	# Normalize coverage value to a copy number of ~1 for sex chromosomes
+	if numMaleControl != 0:
+		normfactorMaleX = normfactorMaleX / numMaleControl
+		normfactorMaleY = normfactorMaleY / numMaleControl
+	if numFemaleControl != 0:
+		normfactorFemaleX = normfactorFemaleX / numFemaleControl
+		normfactorFemaleY = normfactorFemaleY / numFemaleControl
+
+	return (normfactorAut, normfactorMaleX, normfactorMaleY, normfactorFemaleX, normfactorFemaleY)
+
+	
+def populateCnvCopynum(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl):
 	"""
 	Function: 
 	Update "cnv" dictionary with normalized copy number estimations.
 	
 	Parameters:
-	cnv: dictionary containing raw reads and lengths in each chrm:bin:sample.
-	numControl: number of control BAM files (samples).
+	cnv (dict): dictionary containing raw reads and lengths in each chrm:bin:sample.
+	numControl (int): number of control BAM files (samples).
 	
 	Returns:
-	cnv: updated dictionary containing copy number estimations in each chrm:bin:sample.
+	cnv (dict): updated dictionary containing copy number estimations in each chrm:bin:sample.
 	"""
 	for chrm in cnv:
 		for binkey in cnv[chrm]:
-			normfactorCov = 0
-			normfactorMaleX = 0
-			normfactorFemaleX = 0
-			normfactorMaleY = 0
-			normfactorFemaleY = 0
-
-			for bamfile in cnv[chrm][binkey]:
-				if "control" in bamfile:
-					if bamfile in cnv[chrm][binkey].keys():
-						# Coverage 	= sum of (reads * read length) in each bin / bin size
-						# To normalize: divide by total coverage of sample = sum of (reads * read length) in sample
-						binCoverage = cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window
-						totalReadsAndLengths = stats[bamfile]['totalLen']		
-						normalizedBinCoverage = binCoverage / totalReadsAndLengths
-							
-						# if bamfile is from female, stays the same, diploid X, no Y
-						# if bamfile is from male, use normfactorSexChrm and normalize to 1x each
-						
-						sampleSex = stats[bamfile]["sex"]
-						if chrm == "chrX":
-							if sampleSex == "male":
-								normfactorMaleX += normalizedBinCoverage
-							if sampleSex == "female":
-								normfactorFemaleX += normalizedBinCoverage
-						elif chrm == "chrY":
-							if sampleSex == "male":
-								normfactorMaleY += normalizedBinCoverage
-							if sampleSex == "female":
-								normfactorFemaleY += normalizedBinCoverage
-						else:
-							normfactorCov += normalizedBinCoverage
-						 	
-												
-	
-			# Normalize coverage values to a copy number of ~2 for autosomal chromosomes (for normal diploid)	
-			normfactorCov = (0.5 * normfactorCov) / (numMaleControl + numFemaleControl)
-			# Normalize coverage value to a copy number of ~1 for sex chromosomes
-			if numMaleControl != 0:
-				normfactorMaleX = normfactorMaleX / numMaleControl	
-				normfactorMaleY = normfactorMaleY / numMaleControl
-			if numFemaleControl != 0:
-				normfactorFemaleX = normfactorFemaleX / numFemaleControl
-				normfactorFemaleY = normfactorFemaleY / numFemaleControl
+			normfactorAut, normfactorMaleX, normfactorMaleY, normfactorFemaleX, normfactorFemaleY = \
+				normalizeCnv(cnv, chrm, binkey, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)		
 			
 			for bamfile in cnv[chrm][binkey]:
 				if bamfile in cnv[chrm][binkey].keys():
@@ -275,22 +296,21 @@ def finalizeCnv(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, nu
 								(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
 								stats[bamfile]['totalLen'] / normfactorFemaleY
 					else:
-						if normfactorCov != 0:
+						if normfactorAut != 0:
 							cnv[chrm][binkey][bamfile][copynum] = \
 						 		(cnv[chrm][binkey][bamfile]['sumReadLengths'] / arg.window) / \
-								stats[bamfile]['totalLen'] / normfactorCov
+								stats[bamfile]['totalLen'] / normfactorAut
 	return cnv
 
 
-
-def printCoverage(cnv, samples):
+def outputCnv(cnv, samples):
 	"""
 	Function: 
-	output to file.
+	Output CNV info to file.
 	
 	Parameters:
-	cnv: dictionary containing CNV estimations
-	samples: list contanining BAM files paths
+	cnv (dict): dictionary containing CNV estimations
+	samples (list): list contanining BAM files paths
 
 	Returns:
 	None
@@ -318,7 +338,6 @@ def printCoverage(cnv, samples):
 	return None
 
 
-
 if __name__ == '__main__':
 	timestart = datetime.now()	
 	print('timestart = %s' % timestart)
@@ -330,21 +349,21 @@ if __name__ == '__main__':
 	end_getBamfiles = datetime.now()
 	print('getBamfiles() %s' % (end_getBamfiles - timestart))
 
-	cnv, bamfiles, stats = initCnv(bamfilePaths)
-	end_initCnv = datetime.now()
-	print('initCnv() %s' % (end_initCnv - end_getBamfiles))
+	cnv, bamfiles, stats = populateCnvReads(bamfilePaths)
+	end_populateCnvReads = datetime.now()
+	print('populateCnvReads() %s' % (end_populateCnvReads - end_getBamfiles))
 
 	stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl = findSampleSex(bamfiles, stats)
 	end_findSampleSex = datetime.now()
-	print('findSampleSex() %s' % (end_findSampleSex - end_initCnv)
+	print('findSampleSex() %s' % (end_findSampleSex - end_populateCnvReads)
 	print(stats)	
 
-	cnv = finalizeCnv(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)
-	end_finalizeCnv = datetime.now()
-	print('finalizeCnv() %s' % (end_finalizeCnv - end_findSampleSex))
+	cnv = populateCnvCopynum(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)
+	end_populateCnvCopynum = datetime.now()
+	print('populateCnvCopynum() %s' % (end_populateCnvCopynum - end_findSampleSex))
 		
-	printCoverage(cnv, bamfiles)
-	end_printCoverage = datetime.now()
-	print('printCoverage() %s' % (end_printCoverage - end_finalizeCnv))
+	outputCnv(cnv, bamfiles)
+	end_outputCnv = datetime.now()
+	print('outputCnv() %s' % (end_outputCnv - end_populateCnvCopynum))
 
 	print('timeend = %s' % (datetime.now() - timestart))

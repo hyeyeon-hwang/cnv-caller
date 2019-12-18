@@ -47,6 +47,13 @@ parser.add_argument(
 	default=5000,
 	metavar='<int>', 
 	help='size of the window')
+parser.add_argument(
+	'--sexCallerOnly',
+	required=False,
+	type=str,
+	default='no',
+	metavar='<str>',
+	help='either "yes" or "no" string to indicate whether to execute sex caller only (and not CNV caller)')
 arg = parser.parse_args()
 
 # Write print statement outputs to file
@@ -160,7 +167,7 @@ def findSampleSex(bamfiles, stats):
 	bamfiles (list): list containing the input sample files.
 	stats (dict): dictionary containing sample info.
 
-	Return:
+	Returns:
 	stats (dict): updated dictionary with sex info as a string ("male" or "female").
 	numMaleSamples (int): number of male samples.
 	numFemaleSamples (int): number of female samples.
@@ -188,7 +195,38 @@ def findSampleSex(bamfiles, stats):
 			if "control" in bamfile:
 				numFemaleControl += 1
 
+	
+	
 	return (stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)
+
+def outputSexCaller(stats, filename = "sex_caller_output.txt"):
+"""
+	Function:
+	Outputs sex info of all samples to an output file.
+
+	Parameters:
+	stats (dict): dictionary containing info of all samples.
+	filename (str): optional path and/or name of output file.
+
+	Returns:
+	None
+"""
+	with open(datetime.now().strftime('%I:%M%p_%b%d') + filename, 'w', newline='') as outfile:
+		outfile = csv.writer(outfile, delimiter='\t')
+		samples.sort()
+		outfile.writerow(['Sample_name', 'ChrX_reads', 'ChrY_reads', 'ChrY:ChrX ratio', 'ChrY:ChrX %', 'Sex'])
+        
+		for bamfile in stats:
+			outfile.writerow([
+				bamfile,
+				stats[bamfile]["chrX"],
+				stats[bamfile]["chrY"],
+				stats[bamfile]["chrY"]/stats[bamfile]["chrX"],
+				round((stats[bamfile]["chrY"]/stats[bamfile]["chrX"]) * 100, 5),
+				stats[bamfile]["sex"]
+			])	
+	
+	return None
 
 
 def normalizeCnv(cnv, chrm, binkey, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl):
@@ -358,12 +396,16 @@ if __name__ == '__main__':
 	print('findSampleSex() %s' % (end_findSampleSex - end_populateCnvReads)
 	print(stats)	
 
-	cnv = populateCnvCopynum(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)
-	end_populateCnvCopynum = datetime.now()
-	print('populateCnvCopynum() %s' % (end_populateCnvCopynum - end_findSampleSex))
+	if arg.sexCallerOnly == "no":
+		cnv = populateCnvCopynum(cnv, stats, numMaleSamples, numFemaleSamples, numMaleControl, numFemaleControl)
+		end_populateCnvCopynum = datetime.now()
+		print('populateCnvCopynum() %s' % (end_populateCnvCopynum - end_findSampleSex))
 		
-	outputCnv(cnv, bamfiles)
-	end_outputCnv = datetime.now()
-	print('outputCnv() %s' % (end_outputCnv - end_populateCnvCopynum))
+		outputCnv(cnv, bamfiles)
+		end_outputCnv = datetime.now()
+		print('outputCnv() %s' % (end_outputCnv - end_populateCnvCopynum))
+
+	else:
+		outputSexCaller()
 
 	print('timeend = %s' % (datetime.now() - timestart))

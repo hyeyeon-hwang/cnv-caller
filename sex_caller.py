@@ -1,5 +1,6 @@
 #!usr/bin/env python3
 
+import argparse
 import sys
 import os
 import pysam
@@ -7,8 +8,27 @@ from datetime import datetime
 from multiprocessing import Pool
 import csv
 
+extended_help = """
+Input the path to the directory containing the bam files.
+"""
+
+# Input command line arguments
+parser = argparse.ArgumentParser(
+	description='sex caller',
+	formatter_class=argparse.RawDescriptionHelpFormatter,
+	epilog=extended_help)
+
+parser.add_argument(
+	'--samples',
+	required=True,
+	type=str,
+	metavar='<path>',
+	help='path to a directory of bam files')
+	
+arg = parser.parse_args()
+
 # Write print statement outputs to file
-sys.stdout = open(datetime.now().strftime('%I:%M%p_%b%d') + '_sex_caller.out', 'w')
+# sys.stdout = open(datetime.now().strftime('%I:%M%p_%b%d') + '_sex_caller.out', 'w')
 
 sexChrm = ["chrX", "chrY"]
 
@@ -21,7 +41,7 @@ def getBamfiles(path):
 
 def sexCaller(bamfile):
 	print(bamfile)
-	with open("cffDNA_sex_output", 'a', newline='') as outfile:
+	with open("cffDNA_sex_caller_output.txt", 'a', newline='') as outfile:
 		outfile = csv.writer(outfile, delimiter='\t')
 		stats = {}
 		print('bamfile = %s' % bamfile)
@@ -50,17 +70,18 @@ if __name__ == '__main__':
 	timestart = datetime.now()	
 	print('timestart = %s' % timestart)
 
-	bamfilePaths = getBamfiles("../../cffDNA/bam/")
+	# "../../cffDNA/bam/"
+	bamfilePaths = getBamfiles(arg.samples)
 	end_1 = datetime.now()
 	print(*bamfilePaths, sep='\n')
 	print(len(bamfilePaths))
 	print('getBamfiles() %s' % (end_1 - timestart))
 
-	with open("cffDNA_sex_output", 'w', newline='') as outfile:
+	with open("cffDNA_sex_caller_output.txt", 'w', newline='') as outfile:
 		outfile = csv.writer(outfile, delimiter='\t')
 		outfile.writerow(['Sample_name', 'ChrX_reads', 'ChrY_reads', 'ChrY:ChrX_ratio', 'ChrY:ChrX_%'])		
 		
-	pool = Pool(processes = 24)
+	pool = Pool(processes = 56)
 	pool.map(sexCaller, bamfilePaths)
 	pool.close()
 	pool.join()

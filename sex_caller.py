@@ -24,6 +24,14 @@ parser.add_argument(
 	type=str,
 	metavar='<path>',
 	help='path to a directory of bam files')
+
+parset.add_argument(
+	'--cores',
+	required=False,
+	type=int,
+	default = 1,
+	metavar='<int>',
+	help='number of cores to use for parallel processing')
 	
 arg = parser.parse_args()
 
@@ -65,6 +73,10 @@ def sexCaller(bamfile):
 		])	
 		
 		print('time for bamfile = %s' % (datetime.now() - tstart))
+
+# sort output file by Name?
+# def sortOutput(outputFile):
+
 	
 if __name__ == '__main__':
 	timestart = datetime.now()	
@@ -81,7 +93,8 @@ if __name__ == '__main__':
 		outfile = csv.writer(outfile, delimiter='\t')
 		outfile.writerow(['Sample_name', 'ChrX_reads', 'ChrY_reads', 'ChrY:ChrX_ratio', 'ChrY:ChrX_%'])		
 		
-	pool = Pool(processes = 56)
+	# arg.cores = 56
+	pool = Pool(processes = arg.cores) 
 	pool.map(sexCaller, bamfilePaths)
 	pool.close()
 	pool.join()

@@ -61,23 +61,22 @@ def getBamfiles(path):
 
 def sexCaller(bamfile):
 	print(bamfile)
-	with open("sex_caller_output_asd_Jan22.txt", 'a', newline='') as outfile:
+	with open("sex_caller_output_asd_Jan28.txt", 'a', newline='') as outfile:
 		outfile = csv.writer(outfile, delimiter='\t')
 		stats = {}
 		print('bamfile = %s' % bamfile)
 		tstart = datetime.now()
 		
 		samfile = pysam.AlignmentFile(bamfile, 'rb') 
-		stats[bamfile] = {"chrX": 0, "chrY":0}		
+		stats[bamfile] = {"chrX": 0, "chrY":0, "sex": None}		
 		for read in samfile:
 			if read.reference_name in sexChrm and read.is_duplicate == False:
 				stats[bamfile][read.reference_name] += 1
-		if stats[bamfile]["chrY"]/stat[bamfile]["chrX"] > 0.06: 
+		if stats[bamfile]["chrY"]/stats[bamfile]["chrX"] > 0.06: 
 		# ratio for humans, different for cffDNA, make cutoff value an argument
-			stats[bamfile]["sex"] == "M"
+			stats[bamfile]["sex"] = "Male"
 		else: 
-			stats[bamfile]["sex"] == "F"
- 	
+			stats[bamfile]["sex"] = "Female"
 		filename = bamfile.split("/")[-1]
 		samplename = filename.split("_")[0]
 
@@ -93,6 +92,7 @@ def sexCaller(bamfile):
 			])	
 		else:
 			sampleInfo = getSampleInfo(arg.sampleInfo)
+			print(sampleInfo.loc[samplename, 'Sex'])
 
 			outfile.writerow([
 				samplename,
@@ -136,16 +136,16 @@ if __name__ == '__main__':
 	print(len(bamfilePaths))
 	print('getBamfiles() %s' % (end_1 - timestart))
 
-	with open("sex_caller_output_asd_Jan22.txt", 'w', newline='') as outfile:
+	with open("sex_caller_output_asd_Jan28.txt", 'w', newline='') as outfile:
 		outfile = csv.writer(outfile, delimiter='\t')
 		if arg.sampleInfo == None:
 			outfile.writerow([	
 				'Sample_name', 'ChrX_reads', 'ChrY_reads', \
-				'ChrY:ChrX_ratio', 'ChrY:ChrX_%', 'Sex'])		
+				'ChrY:ChrX_ratio', 'ChrY:ChrX_percent', 'Sex'])		
 		else:
 			outfile.writerow([	
 				'Sample_name', 'ChrX_reads', 'ChrY_reads', \
-				'ChrY:ChrX_ratio', 'ChrY:ChrX_%', 'Sex', 'Sample_info_sex'])		
+				'ChrY:ChrX_ratio', 'ChrY:ChrX_percent', 'Sex', 'Sample_info_sex'])		
 	
 	
 	# arg.cores = 56

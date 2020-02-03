@@ -14,7 +14,7 @@ extended_help = """
 Input the path to the directory containing the bam files.
 
 To run:
-python3 sex_caller.py --samples /share/lasallelab/Hyeyeon/projects/cnv-caller/allSamplesASD/ --cores 56 --sampleInfo /share/lasallelab/Hyeyeon/projects/cnv-caller/ASD_sample_info.csv
+python3 sex_caller.py --samples /share/lasallelab/Hyeyeon/projects/cnv-caller/allSamplesASD/ --cores 27 --sampleInfo /share/lasallelab/Hyeyeon/projects/cnv-caller/ASD_sample_info.csv
 """
 
 # Input command line arguments
@@ -62,8 +62,8 @@ def getBamfiles(path):
 
 def countSexChrmReads(bamfile):
 	with open('tempfile.txt', 'a', newline='') as tempfile:
-		tempfile = csv.writer(tempfile, delimeter='\t')
-		stats{}
+		tempfile = csv.writer(tempfile, delimiter='\t')
+		stats = {}
 		
 		samfile = pysam.AlignmentFile(bamfile, 'rb')
 		stats[bamfile] = {'chrX': 0, 'chrY': 0}
@@ -73,94 +73,58 @@ def countSexChrmReads(bamfile):
 		
 		filename = bamfile.split("/")[-1]
 		samplename = filename.split("_")[0]
+			
+		sampleInfo = getSampleInfo(arg.sampleInfo)
 
 		tempfile.writerow([
 			samplename,
 			stats[bamfile]['chrX'],
 			stats[bamfile]['chrY'],
 			stats[bamfile]['chrY']/stats[bamfile]['chrX'],
+			round((stats[bamfile]['chrY']/stats[bamfile]['chrX']) * 100, 5),
+			sampleInfo.loc[samplename, 'Sex']
 			])	
 	
 def predictSex():
 	stats = pd.read_csv("tempfile.txt", sep='\t', engine='python')
+	# Delete tempfile after reading in
+	os.remove('tempfile.txt')
 	
+	kmeansData = stats[['ChrY:ChrX_ratio']].copy()
+	# Add placeholder column because kmeans.fit_predict() requires 2D data
+	kmeansData['placeholder'] = [0] * len(kmeansData.index)
 	kmeans = KMeans(n_clusters = 2)
-	kmeansData = stats[['ChrY:ChrX_ratio']] # add in placeholder column
-	predictions = kmeans.fit_predict(kmeansData)
-	centers = kmeans.cluster_centers_
 
-	print(centers)
-	print(predictions)
-
-	if centers[0][1] > centers[1][1]:
-		index0 = 'Male'
-		index1 = 'Female'
+	index0 = None
+	index1 = None
+	if centers[0][0] > centers[1][0]:
+		index0 = 'M'
+		index1 = 'F'
 	else:
-		index0 = 'Female'
-		index1 = 'Male'	
+		index0 = 'F'
+		index1 = 'M'	
 
-		
-	
-# split into predictSex
-# output to file
-# compute sex ratio
-def sexCaller(bamfile):
-	print(bamfile)
-	with open("sex_caller_output_asd_Jan28.txt", 'a', newline='') as outfile:
-		outfile = csv.writer(outfile, delimiter='\t')
-		stats = {}
-		print('bamfile = %s' % bamfile)
-		tstart = datetime.now()
-		
-		samfile = pysam.AlignmentFile(bamfile, 'rb') 
-		stats[bamfile] = {"chrX": 0, "chrY":0, "sex": None}		
-		for read in samfile:
-			if read.reference_name in sexChrm and read.is_duplicate == False:
-				stats[bamfile][read.reference_name] += 1
-		sexChrmRatio = stats[bamfile]["chrY"]/stats[bamfile]["chrX"]
-			
-		
-		
-		if stats[bamfile]["chrY"]/stats[bamfile]["chrX"] > 0.06: 
-		# ratio for humans, different for cffDNA, make cutoff value an argument
-			stats[bamfile]["sex"] = "Male"
-		else: 
-			stats[bamfile]["sex"] = "Female"
-		
-		
-		
-		filename = bamfile.split("/")[-1]
-		samplename = filename.split("_")[0]
-
-		if arg.sampleInfo == None:
-	
-			outfile.writerow([
-				samplename,
-				stats[bamfile]["chrX"],
-				stats[bamfile]["chrY"],
-				sexChrmRatio,
-				round(sexChrmRatio * 100, 5),
-				stats[bamfile]["sex"]
-			])	
+	predictedSex = []
+	for predIdx in predictions:
+		if predIdx == 0:
+			predictedSex.append(index0)
 		else:
-			sampleInfo = getSampleInfo(arg.sampleInfo)
-			print(sampleInfo.loc[samplename, 'Sex'])
+			predictedSex.append(index1)
 
-			outfile.writerow([
-				samplename,
-				stats[bamfile]["chrX"],
-				stats[bamfile]["chrY"],
-				sexChrmRatio,
-				round(sexChrmRatio * 100, 5),
-				stats[bamfile]["sex"],
-				sampleInfo.loc[samplename, 'Sex']
-			])	
-			
-		
-		print('time for bamfile = %s' % (datetime.now() - tstart))
+	outputPredStats = stats.copy()
+	outputPredStats['Predicted_sex'] = predictedSex 		
 
-# sort output file by Name?
-# def sortOutput(outputFile):
+	# Add 'Sex_mismatch' column if there were mismatches in the 'Sample_info_sex' and 'Predicted_sex' columns
+	# Rows with mismatches are labeled as 'Mismatch'
+	# Rows with consistent sex labels are marked with '.'
+	if outputPredStats['Sample_info_sex'].equals(outputPredStats['Predicted_sex']) == False:
+		outputPredStats['Sex_mismatch'] = ['.'] * len(outputPredStats.index)
+		for i in range(0, len(outputPredStats.index)):
+			if outputPredStats['Sample_info_sex'][i] != outputPredStats['Predicted_sex'][i]:
+				outputPredStats['Sex_mismatch'][i] = "Mismatch"
+	
+	outputPredStats = outputPredStats.sort_values(by = 'Sample_name')
+	outputPredStats.to_csv(datetime.now().strftime('%I:%M%p_%b%d') + 'sex_caller_output.txt', sep='\t', index=False)		
 
 # infoFile = "ASD_sample_info.csv"
 def getSampleInfo(sampleInfoFile):
@@ -188,25 +152,18 @@ if __name__ == '__main__':
 	print(len(bamfilePaths))
 	print('getBamfiles() %s' % (end_1 - timestart))
 
-#	with open("sex_caller_output_asd_Jan28.txt", 'w', newline='') as outfile:
-#		outfile = csv.writer(outfile, delimiter='\t')
-#		if arg.sampleInfo == None:
-#			outfile.writerow([	
-#				'Sample_name', 'ChrX_reads', 'ChrY_reads', \
-#				'ChrY:ChrX_ratio', 'ChrY:ChrX_percent', 'Sex'])		
-#		else:
-#			outfile.writerow([	
-#				'Sample_name', 'ChrX_reads', 'ChrY_reads', \
-#				'ChrY:ChrX_ratio', 'ChrY:ChrX_percent', 'Sex', 'Sample_info_sex'])		
 	with open('tempfile.txt', 'w', newline='') as tempfile:
-		tempfile = csv.writer(tempfile, delimeter='\t')
-		tempfile.writerow(['Sample_name', 'ChrX_reads', 'ChrY_reads', 'ChrY:ChrX_ratio'])	
+		tempfile = csv.writer(tempfile, delimiter='\t')
+		tempfile.writerow([
+			'Sample_name', 'ChrX_reads', 'ChrY_reads', 
+			'ChrY:ChrX_ratio', 'ChrY:ChrX_percent',
+			'Sample_info_sex'])
 
 	
-	# arg.cores = 56
 	pool = Pool(processes = arg.cores) 
-	pool.map(sexCaller, bamfilePaths)
+	pool.map(countSexChrmReads, bamfilePaths)
 	pool.close()
 	pool.join()
 	
+	predictSex()
 	print('timeend = %s' % (datetime.now() - timestart))

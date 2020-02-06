@@ -51,8 +51,6 @@ arg = parser.parse_args()
 # Write print statement outputs to file
 # sys.stdout = open(datetime.now().strftime('%I:%M%p_%b%d') + '_sex_caller.out', 'w')
 
-sexChrm = ["chrX", "chrY"]
-
 def getBamfiles(path):
 	bamfilePaths = []
 	for bamfile in os.listdir(path):
@@ -64,37 +62,51 @@ def countSexChrmReads(bamfile):
 	with open('tempfile.txt', 'a', newline='') as tempfile:
 		tempfile = csv.writer(tempfile, delimiter='\t')
 		stats = {}
-		
 		samfile = pysam.AlignmentFile(bamfile, 'rb')
 		stats[bamfile] = {'chrX': 0, 'chrY': 0}
 		for read in samfile:
-			if read.reference_name in sexChrm and read.is_duplicate == False:
+			if read.reference_name in ['chrX', 'chrY'] and read.is_duplicate == False:
 				stats[bamfile][read.reference_name] += 1
 		
 		filename = bamfile.split("/")[-1]
 		samplename = filename.split("_")[0]
 			
 		sampleInfo = getSampleInfo(arg.sampleInfo)
-
+			
+		# started 2.51 G, max at 2.74 G
+		sexChrmRatio = stats[bamfile]['chrY']/stats[bamfile]['chrX']
+		
 		tempfile.writerow([
 			samplename,
 			stats[bamfile]['chrX'],
 			stats[bamfile]['chrY'],
-			stats[bamfile]['chrY']/stats[bamfile]['chrX'],
-			round((stats[bamfile]['chrY']/stats[bamfile]['chrX']) * 100, 5),
+			sexChrmRatio,
+			sexChrmRatio * 100,
 			sampleInfo.loc[samplename, 'Sex']
 			])	
-	
+
 def predictSex():
 	stats = pd.read_csv("tempfile.txt", sep='\t', engine='python')
 	# Delete tempfile after reading in
-	os.remove('tempfile.txt')
-	
+	# os.remove('tempfile.txt')
+
+	# round here because odd rounding behavior occurs when reading in rounded values
+	stats['ChrY:ChrX_percent'] = round(stats['ChrY:ChrX_percent'], 5)
+	# stats['ChrY:ChrX_percent'] = float('{0:.5f}'.format(stats['ChrY:ChrX_percent']))
+		
 	kmeansData = stats[['ChrY:ChrX_ratio']].copy()
 	# Add placeholder column because kmeans.fit_predict() requires 2D data
 	kmeansData['placeholder'] = [0] * len(kmeansData.index)
 	kmeans = KMeans(n_clusters = 2)
+	predictions = kmeans.fit_predict(kmeansData)
+	centers = kmeans.cluster_centers_
 
+	# divide two center values
+	# choose smaller or larger as the numerator or denominator
+	# if close to 1, then all samples are of one sex
+	# if greater than 0.5? most will be greater than 0.9, very close to 1
+	# 0.004/0.12 = 0.03, not even 0.1 
+		
 	index0 = None
 	index1 = None
 	if centers[0][0] > centers[1][0]:
@@ -110,21 +122,20 @@ def predictSex():
 			predictedSex.append(index0)
 		else:
 			predictedSex.append(index1)
-
-	outputPredStats = stats.copy()
-	outputPredStats['Predicted_sex'] = predictedSex 		
+	
+	stats['Predicted_sex'] = predictedSex
 
 	# Add 'Sex_mismatch' column if there were mismatches in the 'Sample_info_sex' and 'Predicted_sex' columns
 	# Rows with mismatches are labeled as 'Mismatch'
 	# Rows with consistent sex labels are marked with '.'
-	if outputPredStats['Sample_info_sex'].equals(outputPredStats['Predicted_sex']) == False:
-		outputPredStats['Sex_mismatch'] = ['.'] * len(outputPredStats.index)
-		for i in range(0, len(outputPredStats.index)):
-			if outputPredStats['Sample_info_sex'][i] != outputPredStats['Predicted_sex'][i]:
-				outputPredStats['Sex_mismatch'][i] = "Mismatch"
-	
-	outputPredStats = outputPredStats.sort_values(by = 'Sample_name')
-	outputPredStats.to_csv(datetime.now().strftime('%I:%M%p_%b%d') + 'sex_caller_output.txt', sep='\t', index=False)		
+	if stats['Sample_info_sex'].equals(stats['Predicted_sex']) == False:
+		sexMismatchList = ['.'] * len(stats.index)
+		for i in range(0, len(stats.index)):
+			if stats['Sample_info_sex'][i] != stats['Predicted_sex'][i]:
+				sexMismatchList[i] = "Mismatch"
+	stats['Sex_mismatch'] = sexMismatchList
+	stats = stats.sort_values(by = 'Sample_name')
+	stats.to_csv(datetime.now().strftime('%I:%M%p_%b%d') + '_sex_caller_output.txt', sep = '\t', index = False)
 
 # infoFile = "ASD_sample_info.csv"
 def getSampleInfo(sampleInfoFile):
@@ -137,7 +148,6 @@ def getSampleInfo(sampleInfoFile):
 		print("Sample info csv file must contain the following columns: 'Name', 'Sex'")
 		# read first line of csv - should contain header
 		# required columns are "Name" and "Sex"
-			  	
 	return sampleInfo
 	
 if __name__ == '__main__':
